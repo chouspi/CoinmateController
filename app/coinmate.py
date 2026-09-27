@@ -160,8 +160,13 @@ class CoinmateClient:
         if not isinstance(fees, dict):
             raise CoinmateError("Invalid trading fees")
         maker = self.parse_decimal(fees.get("maker"), "maker fee")
+        taker = self.parse_decimal(fees.get("taker"), "taker fee")
+        if not 0 <= maker < 100 or not 0 <= taker < 100:
+            raise CoinmateError("Invalid trading fees")
         if maker > Decimal("0.4"):
             raise CoinmateError("Maker fee exceeds 0.4%; purchase paused")
+        # Conservative reservation for order admission; actual fills still use maker fees.
+        fee_factor = 1 + max(maker, taker) / 100
         book = await self._get("/orderBook", {"currencyPair": "BTC_CZK", "groupByPriceLimit": "true"})
         if not isinstance(book, dict) or book.get("status") != "TRADING" or not book.get("asks"):
             raise CoinmateError("BTC_CZK order book is unavailable")
@@ -175,18 +180,30 @@ class CoinmateClient:
             raise CoinmateError("Invalid maker price")
         lot = Decimal(1).scaleb(-pair["lotDecimals"])
         minimum = minimum.quantize(lot, rounding=ROUND_CEILING)
-        return {"price": price, "lot": lot, "minimum_btc": minimum,
-                "minimum_czk": (minimum * price * Decimal("1.004") + Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_CEILING)}
+        return {"price": price, "lot": lot, "minimum_btc": minimum, "fee_factor": fee_factor,
+                "minimum_czk": (minimum * price * fee_factor + Decimal("0.01")).quantize(Decimal("0.01"), rounding=ROUND_CEILING)}
 
     async def maker_quote(self, budget: Decimal, ceiling: Decimal | None) -> dict[str, str] | None:
         market = await self.maker_market()
         price, lot, minimum = market["price"], market["lot"], market["minimum_btc"]
         if ceiling is not None:
             price = min(price, ceiling)
-        # Reserve the maximum allowed maker fee, including a haler for fee rounding.
-        amount = (max(Decimal(0), budget - Decimal("0.01")) / Decimal("1.004") / price).quantize(lot, rounding=ROUND_DOWN)
+        # A haler also covers fee rounding. Finish only when the remaining budget
+        # is dust, never merely because another order has reserved the balance.
+        factor = market["fee_factor"]
+        amount = (max(Decimal(0), budget - Decimal("0.01")) / factor / price).quantize(lot, rounding=ROUND_DOWN)
         if amount < minimum or amount <= 0:
             return None
+        balances = await self.balances()
+        czk = balances.get("CZK") if isinstance(balances, dict) else None
+        if not isinstance(czk, dict):
+            raise CoinmateError("Coinmate returned invalid CZK balance")
+        available = self.parse_decimal(czk.get("available"), "available CZK")
+        if available < 0:
+            raise CoinmateError("Coinmate returned invalid available CZK")
+        amount = min(amount, (max(Decimal(0), available - Decimal("0.01")) / factor / price).quantize(lot, rounding=ROUND_DOWN))
+        if amount < minimum or amount <= 0:
+            raise CoinmateError("Nedostatek dostupných CZK pro minimální objednávku včetně rezervy na poplatek.")
         return {"price": format(price, "f"), "amount": format(amount, "f")}
 
     async def place_limit_buy(self, quote: dict[str, str], client_order_id: str) -> int:

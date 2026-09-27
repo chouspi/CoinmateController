@@ -156,14 +156,35 @@ class PurchaseStore:
             self._connection.execute("UPDATE maker_runs SET state = ? WHERE idempotency_key = ?",
                                      (json.dumps(state), key))
 
-    def finish_maker(self, key: str, state: dict, status: str) -> None:
+    def request_maker_cancel(self, key: str) -> PurchaseRecord:
+        with self._lock, self._connection:
+            record = self.get(key)
+            if record is None:
+                raise KeyError(key)
+            if record.status in {"FILLED", "CANCELLED", "REJECTED"}:
+                return record
+            state = self.maker_state(key)
+            if state is None:
+                raise ValueError("Only maker purchases support cancellation")
+            if state.get("cancel_requested"):
+                return record
+            state["cancel_requested"] = True
+            self._connection.execute("UPDATE maker_runs SET state=? WHERE idempotency_key=?",
+                                     (json.dumps(state), key))
+            self._connection.execute("UPDATE purchases SET status='CANCELLING', updated_at=strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE idempotency_key=?", (key,))
+            self._connection.execute("INSERT INTO purchase_events(idempotency_key,event,detail) VALUES(?, 'CANCELLING', ?)",
+                                     (key, "Cancellation requested by operator"))
+            return self.get(key)
+
+    def finish_maker(self, key: str, state: dict, status: str,
+                     detail: str = "Remaining budget below exchange minimum") -> None:
         # The terminal marker and the accounting result must survive a crash together.
         with self._lock, self._connection:
             self._connection.execute("UPDATE maker_runs SET state=? WHERE idempotency_key=?", (json.dumps(state), key))
             self._connection.execute("UPDATE purchases SET status=?, btc_bought=? WHERE idempotency_key=?",
                                      (status, state["btc_bought"], key))
             self._connection.execute("INSERT INTO purchase_events(idempotency_key,event,detail) VALUES(?,?,?)",
-                                     (key, status, "Remaining budget below exchange minimum"))
+                                     (key, status, detail))
 
     def maker_keys(self) -> list[str]:
         with self._lock:

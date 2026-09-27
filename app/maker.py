@@ -20,9 +20,8 @@ class MakerPurchases:
     async def step(self, key: str, client_id) -> None:
         state = self.store.maker_state(key)
         record = self.store.get(key)
-        if state is None or record is None:
+        if state is None or record is None or record.status in {"FILLED", "CANCELLED", "REJECTED"}:
             return
-        state["error"] = None
         try:
             await self._step(key, record, state, client_id)
         except CoinmateError as exc:
@@ -48,9 +47,11 @@ class MakerPurchases:
             order = await self.coinmate.order_by_id(attempt["order_id"])
             self._read_order(attempt, order)
             self._totals(state)
-            self.store.transition(key, "PLACED", btc_bought=state["btc_bought"])
+            state["error"] = None
+            self.store.transition(key, "CANCELLING" if state.get("cancel_requested") else "PLACED",
+                                  btc_bought=state["btc_bought"])
             if order["status"] not in {"FILLED", "CANCELLED"}:
-                if time.time() - attempt["placed_at"] >= self.reprice_seconds:
+                if state.get("cancel_requested") or time.time() - attempt["placed_at"] >= self.reprice_seconds:
                     # Cancellation may race with a fill. Only a later terminal order
                     # snapshot allows the next attempt, including after a restart.
                     attempt["status"] = "CANCELLING"
@@ -60,11 +61,17 @@ class MakerPurchases:
             attempt["status"] = "CLOSED"
             self.store.save_maker(key, state)
 
+        if state.get("cancel_requested"):
+            state["error"] = None
+            state["completed_at"] = state.get("last_fill_at") or time.time()
+            self.store.finish_maker(key, state, "CANCELLED", "Cancellation requested by operator")
+            return
         if time.time() < state["next_attempt_at"]:
             return
         remaining = Decimal(record.amount_czk) - Decimal(state["spent_czk"])
         quote = await self.coinmate.maker_quote(remaining, None)
         if quote is None:
+            state["error"] = None
             filled = Decimal(state["btc_bought"]) > 0
             state["completed_at"] = state.get("last_fill_at") or time.time()
             self.store.finish_maker(key, state, "FILLED" if filled else "REJECTED")
@@ -85,6 +92,7 @@ class MakerPurchases:
             state["next_attempt_at"] = time.time() + self.reprice_seconds
             return
         attempt["status"] = "OPEN"
+        state["error"] = None
         self.store.transition(key, "PLACED", detail=f"order_id={attempt['order_id']}")
 
     def _read_order(self, attempt, order):

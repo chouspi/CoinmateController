@@ -132,6 +132,16 @@ class PurchaseCoordinator:
                     return self._outcome(record)
             return await self._reconcile(record)
 
+    async def cancel(self, key: str) -> PurchaseOutcome | None:
+        async with self._lock:
+            if self._store.get(key) is None:
+                return None
+            try:
+                record = self._store.request_maker_cancel(key)
+            except ValueError as exc:
+                raise PurchaseConflictError(str(exc)) from exc
+            return self._outcome(record)
+
     async def _find_unknown_order(self, record: PurchaseRecord) -> PurchaseRecord:
         orders = await self._coinmate.orders_by_client_order_id(record.client_order_id)
         if not orders:

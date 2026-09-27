@@ -66,6 +66,11 @@ Nakup bezi na serveru i bez dalsich HTTP pozadavku. Prikazy pouzivaji
 Po `PURCHASE_REPRICE_SECONDS` (30 s) se zbytek zrusi, overi posledni plneni a
 vystavi nova maker objednavka ze zbyvajiciho rozpoctu. Cena muze rust i klesat.
 Sazba maker musi byt nejvyse 0,4 %; zadny market fallback neexistuje.
+Velikost objednavky rezervuje vyssi z aktualnich sazeb maker/taker a jeden
+haler na zaokrouhleni. To nemeni post-only rezim ani skutecny poplatek plneni.
+Objednavka se vejde do zbyvajiciho rozpoctu i dostupneho CZK zustatku.
+Pokud dostupny zustatek nestaci na minimum, nakup zustane cekat s chybou;
+nedostatek zustatku se nepovazuje za uspesne dokonceni.
 `PURCHASE_POLL_SECONDS` je vychozi 5 s. Vsechny Coinmate HTTP pozadavky jsou
 serializovany s rozestupem nejmene 0,7 s (limit burzy je 100/min na API klic).
 
@@ -105,6 +110,31 @@ Stav lze bez noveho nakupu overit take samostatne:
 GET /buy_bitcoin/550e8400-e29b-41d4-a716-446655440000
 Authorization: Bearer <CONTROLLER_API_TOKEN>
 ```
+
+### Zruseni maker nakupu
+
+`POST /buy_bitcoin/{idempotency_key}/cancel` se stejnou Bearer autentizaci
+trvale zakaze nove pokusy. Vraci HTTP 202, dokud worker neoveri konec
+existujici objednavky, potom stav `cancelled` a `pending=false`. Castecna
+plneni zustavaji v `btc_bought`, `spent_czk` a `completed_at`. Opakovany
+POST nakupu se stejnym klicem jej znovu nespusti. Neznamy vysledek odeslani
+zustava cekajici i po zruseni: prazdny seznam aktivnich objednavek nedokazuje,
+ze objednavka nebyla vyplnena. Worker dohledava puvodni clientOrderId.
+
+Pro zruseni pred spustenim nove verze pouzijte nasledujici postup (nahradte
+UUID klicem nakupu). Offline prikaz pouzivejte pouze pri zastavene sluzbe:
+
+```sh
+docker compose stop coinmate-controller
+docker compose build coinmate-controller
+docker compose run --rm --no-deps coinmate-controller python -m app.cancel_purchase 550e8400-e29b-41d4-a716-446655440000
+docker compose up -d coinmate-controller
+```
+
+Pokracujte spustenim sluzby pouze pokud prikaz zruseni uspel. Prikaz pouze
+ulozi pozadavek do existujici databaze; sam neodesila zadne objednavky.
+Zruseni a overeni na burze dokonci worker po startu. FINSTRAT2.0 prevezme
+konecny vysledek pri dalsim dotazu a zauctuje pripadna skutecna plneni.
 
 Market prodej BTC funguje stejne idempotentne. `amount` je mnozstvi BTC k prodeji
 a smi mit nejvyse osm desetinnych mist:

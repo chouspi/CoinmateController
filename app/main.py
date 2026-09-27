@@ -277,6 +277,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="Purchase not found")
         return purchase_response(outcome)
 
+    @app.post("/buy_bitcoin/{idempotency_key}/cancel", dependencies=[Depends(authorize)],
+              summary="Stop a maker purchase and reconcile any existing order")
+    async def cancel_bitcoin_purchase(
+        idempotency_key: UUID,
+        coordinator: Annotated[PurchaseCoordinator, Depends(purchases)],
+    ) -> Response:
+        try:
+            outcome = await coordinator.cancel(str(idempotency_key))
+        except PurchaseConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if outcome is None:
+            raise HTTPException(status_code=404, detail="Purchase not found")
+        return purchase_response(outcome)
+
     @app.post(
         "/sell_bitcoin",
         summary="Sell BTC at market price",
