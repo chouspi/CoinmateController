@@ -98,15 +98,22 @@ class MakerPurchases:
     def _read_order(self, attempt, order):
         if order.get("id") != attempt["order_id"] or order.get("type") != "BUY":
             raise CoinmateError("Unexpected buy order")
-        if order.get("status") not in {"FILLED", "CANCELLED", "OPEN", "PARTIALLY_FILLED"}:
+        status = order.get("status")
+        if status not in {"FILLED", "CANCELLED", "OPEN", "PARTIALLY_FILLED"}:
             raise CoinmateError("Invalid buy order status")
-        amount = self.coinmate.parse_decimal(order.get("cumulativeAmount"), "filled BTC")
-        if amount != amount.quantize(Decimal("0.00000001")) or amount < Decimal(attempt["btc_bought"]) or amount > Decimal(attempt["amount"]) or amount < 0:
-            raise CoinmateError("Invalid filled amount")
-        total_amount, total_cost, latest = Decimal(0), Decimal(0), 0
         trades = order.get("trades", [])
         if not isinstance(trades, list):
             raise CoinmateError("Invalid order trades")
+        raw_amount = order.get("cumulativeAmount")
+        if raw_amount in (None, ""):
+            if status == "OPEN" or (status == "CANCELLED" and not trades):
+                raw_amount = "0"
+            else:
+                raise CoinmateError("Coinmate returned invalid filled BTC")
+        amount = self.coinmate.parse_decimal(raw_amount, "filled BTC")
+        if amount != amount.quantize(Decimal("0.00000001")) or amount < Decimal(attempt["btc_bought"]) or amount > Decimal(attempt["amount"]) or amount < 0:
+            raise CoinmateError("Invalid filled amount")
+        total_amount, total_cost, latest = Decimal(0), Decimal(0), 0
         seen = set()
         for trade in trades:
             if not isinstance(trade, dict) or trade.get("currencyPair") != "BTC_CZK" or trade.get("orderId") != attempt["order_id"]:

@@ -168,14 +168,19 @@ class CoinmateClient:
         # Conservative reservation for order admission; actual fills still use maker fees.
         fee_factor = 1 + max(maker, taker) / 100
         book = await self._get("/orderBook", {"currencyPair": "BTC_CZK", "groupByPriceLimit": "true"})
-        if not isinstance(book, dict) or book.get("status") != "TRADING" or not book.get("asks"):
+        if not isinstance(book, dict) or book.get("status") != "TRADING" or not book.get("asks") or not book.get("bids"):
             raise CoinmateError("BTC_CZK order book is unavailable")
         asks = book["asks"]
-        if not isinstance(asks, list) or not all(isinstance(a, dict) for a in asks):
+        bids = book["bids"]
+        if (not isinstance(asks, list) or not all(isinstance(a, dict) for a in asks)
+                or not isinstance(bids, list) or not all(isinstance(a, dict) for a in bids)):
             raise CoinmateError("Invalid order book")
-        best = min(self.parse_decimal(a.get("price"), "ask price") for a in asks)
+        best_ask = min(self.parse_decimal(a.get("price"), "ask price") for a in asks)
+        best_bid = max(self.parse_decimal(a.get("price"), "bid price") for a in bids)
         tick = Decimal(1).scaleb(-pair["priceDecimals"])
-        price = (best - tick).quantize(tick, rounding=ROUND_DOWN)
+        # Join the best bid by one tick to get priority, while staying below the ask
+        # so postOnly remains a maker order. A one-tick spread leaves no room to improve.
+        price = min(best_bid + tick, best_ask - tick).quantize(tick, rounding=ROUND_DOWN)
         if price <= 0:
             raise CoinmateError("Invalid maker price")
         lot = Decimal(1).scaleb(-pair["lotDecimals"])

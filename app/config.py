@@ -15,7 +15,7 @@ class Settings:
     balance_watch_timeout_seconds: float = 30.0
     balance_watch_poll_seconds: float = 5.0
     request_interval_seconds: float = 0.7
-    purchase_reprice_seconds: float = 30.0
+    purchase_reprice_seconds: float = 1800.0
     purchase_poll_seconds: float = 5.0
     database_path: str = ":memory:"
 
@@ -55,7 +55,7 @@ class Settings:
                 "Balance watch intervals must satisfy 0 < poll seconds < timeout seconds"
             )
 
-        reprice = float(os.getenv("PURCHASE_REPRICE_SECONDS", "30"))
+        reprice = float(os.getenv("PURCHASE_REPRICE_SECONDS", "1800"))
         poll = float(os.getenv("PURCHASE_POLL_SECONDS", "5"))
         if not (1 <= poll <= reprice <= 86400):
             raise RuntimeError("Purchase intervals must satisfy 1 <= poll <= reprice <= 86400")

@@ -51,7 +51,9 @@ class Exchange:
         if path == 'orderBook':
             assert request.url.params['currencyPair'] == 'BTC_CZK'
             assert request.url.params['groupByPriceLimit'] == 'true'
-            return self.response({'asks':[{'price':str(self.ask),'amount':'1'}], 'status':'TRADING'})
+            return self.response({'asks':[{'price':str(self.ask),'amount':'1'}],
+                                  'bids':[{'price':str(self.ask - Decimal('0.02')),'amount':'1'}],
+                                  'status':'TRADING'})
         if path == 'balances':
             return self.response({'CZK': {'available': self.available}})
         if path == 'buyLimit':
@@ -133,6 +135,22 @@ def test_partial_fill_cancel_reprice_upward_only_remaining_budget():
         result=client.get(f'/buy_bitcoin/{IDEMPOTENCY_KEY}',headers=AUTH).json()
         assert result['success'] and result['spent_czk']<=2000
         assert Decimal(str(result['btc_bought']))==Decimal('.0003')+Decimal(next_order['amount'])
+
+
+def test_cancelled_unfilled_order_with_null_cumulative_amount_is_replaced():
+    exchange = Exchange(); app = start(exchange)
+    with TestClient(app) as client:
+        client.post('/buy_bitcoin', headers=BUY_AUTH, json={'amount': 1000})
+        tick(client, app)
+        age(app)
+        tick(client, app)
+        assert exchange.orders[1]['status'] == 'CANCELLED'
+        exchange.orders[1]['cumulativeAmount'] = None
+        tick(client, app)
+        assert len(exchange.submissions) == 2
+        state = app.state.purchase_store.maker_state(IDEMPOTENCY_KEY)
+        assert state['attempts'][0]['status'] == 'CLOSED'
+        assert state['attempts'][0]['btc_bought'] == '0'
 
 
 @pytest.mark.parametrize('fill_during_cancel',[False,True])

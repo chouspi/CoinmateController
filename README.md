@@ -62,8 +62,9 @@ vyplneni objednavky a skutecne nakoupene mnozstvi BTC z detailu Coinmate prikazu
 ```
 
 Nakup bezi na serveru i bez dalsich HTTP pozadavku. Prikazy pouzivaji
-`buyLimit`, `postOnly=1` a cenu o jeden tick pod nejlepsi prodejni nabidkou.
-Po `PURCHASE_REPRICE_SECONDS` (30 s) se zbytek zrusi, overi posledni plneni a
+`buyLimit`, `postOnly=1` a cenu o jeden tick nad nejlepsi nakupni nabidkou,
+vzdy vsak pod nejlepsi prodejni nabidkou, aby zustala maker objednavkou.
+Po `PURCHASE_REPRICE_SECONDS` (1800 s, tedy 30 minutach) se zbytek zrusi, overi posledni plneni a
 vystavi nova maker objednavka ze zbyvajiciho rozpoctu. Cena muze rust i klesat.
 Sazba maker musi byt nejvyse 0,4 %; zadny market fallback neexistuje.
 Velikost objednavky rezervuje vyssi z aktualnich sazeb maker/taker a jeden

@@ -166,10 +166,15 @@ class PurchaseCoordinator:
         if order.get("id") != record.coinmate_order_id or order.get("type") != "BUY":
             raise CoinmateError("Coinmate returned an unexpected order")
 
-        btc_bought = self._coinmate.parse_decimal(
-            order.get("cumulativeAmount"),
-            "filled BTC amount",
-        )
+        raw_amount = order.get("cumulativeAmount")
+        if raw_amount in (None, ""):
+            if order.get("status") == "OPEN" or (
+                order.get("status") == "CANCELLED" and order.get("trades") == []
+            ):
+                raw_amount = "0"
+            else:
+                raise CoinmateError("Coinmate returned invalid filled BTC")
+        btc_bought = self._coinmate.parse_decimal(raw_amount, "filled BTC amount")
         if btc_bought < 0 or btc_bought.as_tuple().exponent < -8:
             raise CoinmateError("Coinmate returned an invalid filled BTC amount")
         coinmate_status = order.get("status")
